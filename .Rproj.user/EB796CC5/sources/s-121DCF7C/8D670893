@@ -1,0 +1,22 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1568136273066.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "8D670893",
+    "lastKnownWriteTime" : 1568265319,
+    "last_content_update" : 1568265319626,
+    "path" : "~/GitHub/HCC_Survival_Datset/hypothesisTestingMarkdown.Rmd",
+    "project_path" : "hypothesisTestingMarkdown.Rmd",
+    "properties" : {
+        "cursorPosition" : "1204,0",
+        "scrollLine" : "1186"
+    },
+    "relative_order" : 2,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_markdown"
+}

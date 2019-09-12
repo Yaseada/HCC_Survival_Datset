@@ -1,0 +1,22 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1568136264935.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "556B04BD",
+    "lastKnownWriteTime" : 1568265269,
+    "last_content_update" : 1568265269821,
+    "path" : "~/GitHub/HCC_Survival_Datset/hypothesisTestingScript.R",
+    "project_path" : "hypothesisTestingScript.R",
+    "properties" : {
+        "cursorPosition" : "937,0",
+        "scrollLine" : "934"
+    },
+    "relative_order" : 1,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

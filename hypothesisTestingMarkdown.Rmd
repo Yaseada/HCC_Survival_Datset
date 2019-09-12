@@ -20,7 +20,7 @@ The predictive ability of clinical risk factors to identify survival among patie
 
 A number of approaches have been proposed to predict the prognosis for HCC, none of which are universally adopted.
 
-Clinical risk factors including male sex, diabetes, and hepatitis B infection have been associated with poor survival rates. Scoring systems such as the Barcelona Clinic Liver cancer system, endorsed by the European Association for the Study of the Liver and the American Association for the Study of Liver Diseases, incorporate the extent to the primary lesion, performance status, and liver function in prognostication. Additionally, new tumor molecular biomarkers is increasingly being incorporated into some classifications and represent promising tools for prognosis prediction.
+Clinical risk factors including male sex, diabetes, and hepatitis B infection have been associated with poor survival rates. Scoring systems such as the Barcelona Clinic Liver Cancer system, endorsed by the European Association for the Study of the Liver and the American Association for the Study of Liver Diseases, incorporate the extent of the primary lesion, performance status, and liver function in prognostication. Additionally, new tumor molecular biomarkers are increasingly being incorporated into some classifications and represent promising tools for prognosis prediction.
 
 Given the limited health care resources and the positive association between aggressive treatment and improvement of outcomes, better understanding the incremental predictive performance of these approaches will guide the development of the optimal screening guidelines.
 
@@ -67,7 +67,8 @@ library(tidyr)
 # Load data
 rawData <- read.csv("./hcc-data.txt",
                     stringsAsFactors = FALSE,
-                    na.string = "?")
+                    na.string = "?",
+                    header = FALSE)
 
 seed <- 123
 set.seed(seed)
@@ -193,7 +194,7 @@ ggplot(data.imp, aes(lives)) +
          y = "Proportion")
 ```
 
-* 98 (60.9%) of the population lives
+* 99 (61.1%) of the population lives
 
 ### Univariate plots of predictors and comparison between those who did and did not live
 
@@ -229,7 +230,7 @@ for (i in seq_along(varsPred)) {  # create distribution plots
             scale_y_continuous(breaks = seq(0, 1, by = 0.2)) +
             theme_light() +
             theme(legend.position = "none") +
-            ggthemes::scale_fill_tableau() +
+            ggthemes::scale_fill_tableau(palette = "Classic Gray 5") +
             labs(y = "Proportion",
                  x = varsPred[i])
         plots.bivar[[varsPred[i]]] <- ggplot(data.imp, aes_string(x = varsPred[i],
@@ -360,11 +361,11 @@ comparisonTable <- print(comparisonData,
 
 The group of patients who survived...
 
-* are **lower risk as indicated by clinical factors**: slightly younger (p = 0.035), have a lower proportion of diabetes (non-sig), have a lower proportion with Hepatitis C Virus Antibody (non-sig), have a lower proportion presenting symptoms (p = 0.001)
-* have **better tumor characteristics**: smaller nodule dimension (p > 0.030), have a lower propotion with metastatic tumour (p = 0.003)
-* have **better liver function**: have a lower total bilirubin (p = 0.031), have a lower INR (p = 0.029), lower hemoglobin (p < 0.001), lower degree of ascites (p = 0.004), lower proportion with encephalopathy (p = 0.038), lower AST (p = 0.002), lower ALP (p < 0.001), lower proportion with PVT (p = 0.013)
+* are **lower risk as indicated by clinical factors**: slightly younger (p = 0.036), have a lower proportion of diabetes (non-sig), have a lower proportion with Hepatitis C Virus Antibody (non-sig), have a lower proportion presenting symptoms (p = 0.001)
+* have **better tumor characteristics**: smaller nodule dimension (p > 0.028), have a lower propotion with metastatic tumour (p = 0.003)
+* have **better liver function**: have a lower total bilirubin (p = 0.033), have a lower INR (p = 0.033), lower hemoglobin (p < 0.001), lower degree of ascites (p = 0.004), lower proportion with encephalopathy (p = 0.037), lower AST (p = 0.002), lower ALP (p < 0.001), lower proportion with PVT (p = 0.012)
 * have a **better performance status**: lower performance score (p < 0.001)
-* have **lower molecular HCC biomarker concentrations**: lower AFP (p < 0.001) and lower GGT (p < 0.019)
+* have **lower molecular HCC biomarker concentrations**: lower AFP (p < 0.001) and lower GGT (p = 0.019)
 
 # Split the dataset
 
@@ -428,7 +429,7 @@ with(dataTrain, table(lives, nash))
 with(dataTrain, table(lives, hiv))
 with(dataTrain, table(lives, endemic))
 
-predClinical <- varsClinical[!varsClinical %in% c("nash", "hiv", "endemic")]
+predClinical <- varsClinical[!varsClinical %in% c("nash", "hiv", "endemic","hepBeAg")]
 ```
 
 * "nash", "hiv" and "endemic" all have at least one cell in the 2x2 matrix with <5 values so are removed as predictors
@@ -451,16 +452,6 @@ modelClinicalA <- stepAIC(fullModel.Clinical,
 summary(modelClinicalA)
 ```
 
-### Random forest for feature selection
-
-`randomForest` used to select predictors for `bestglm` and `glmulti`
-
-```{r clin-randomForest}
-rForestClinical <- randomForest(lives ~ ., dataClinical, importance = TRUE)
-importance(rForestClinical)
-varImpPlot(rForestClinical)
-```
-
 ### Model selection via best subsets
 
 Since `bestglm` requires p <=15, "protein_total", "alcohol", "hepCvAb", and "obesity" were removed as predictors (had the lowest mean decrease in accuracy as per random forst)
@@ -470,7 +461,7 @@ dataClinical.Xy <- dataClinical %>%
     mutate_all(as.character) %>%
     mutate_all(as.numeric) %>%
     rename(y = lives) %>%
-    dplyr::select(-c(protein_total, alcohol, hepCvAb, obesity))  # max p = 15
+    dplyr::select(-c(mcv, protein_total, hepCvAb))  # max p = 15
 
 modelClinical.bestglm <- bestglm(dataClinical.Xy,
                                  family = binomial,
@@ -481,19 +472,30 @@ modelClinical.bestglm <- bestglm(dataClinical.Xy,
 modelClinicalB <- modelClinical.bestglm$BestModel
 summary(modelClinicalB)
 
-modelClinicalB <- glm(lives ~ diabetes + hypertension + symptoms + creatinine,
-                      data = dataClinical,
-                      family = binomial)
+modelClinicalB <- glm(lives ~ age + diabetes + hypertension + symptoms,
+                      dataClinical,
+                      family = "binomial")
+```
+
+### Random forest for feature selection
+
+`randomForest` used to select predictors for `glmulti`
+
+```{r clin-randomForest}
+set.seed(seed)
+rForestClinical <- randomForest(lives ~ ., dataClinical, importance = TRUE)
+importance(rForestClinical)
+varImpPlot(rForestClinical)
 ```
 
 ### Model selection via automated model selection and model-averaging
 
-Selected the top 10 predictors as per random forest for `glmulti`
+Selected the top 12 predictors as per random forest for `glmulti`
 
 ```{r clin-modelAveraging}
-modelClinical.glmulti <- glmulti(lives ~ symptoms + creatinine + hepBcAb +
-                                     diabetes + hemochromatosis +age + leuk +
-                                     hypertension + renalInsufficiency + mcv,
+modelClinical.glmulti <- glmulti(lives ~ creatinine + hepBcAb + protein_total + leuk +
+                                     diabetes + obesity + mcv + symptoms +
+                                     hypertension + alcohol + hemochromatosis + renalInsufficiency,
                              data = dataClinical,
                              level = 1,
                              crit = "bic",
@@ -501,9 +503,14 @@ modelClinical.glmulti <- glmulti(lives ~ symptoms + creatinine + hepBcAb +
                              fitfunction = "glm",
                              family = binomial)
 print(modelClinical.glmulti)
+
+modelClinicalC <- glm(lives ~ diabetes + symptoms + hypertension + creatinine,
+                      dataClinical,
+                      family = "binomial")
+
+summary(modelClinicalC)
 ```
 
-* The model selected via automated model selection and model-averaging is the same as best subsets
 
 ### Model error check
 
@@ -511,14 +518,17 @@ print(modelClinical.glmulti)
 # Multicollinearity
 vif(modelClinicalA)
 vif(modelClinicalB)
+vif(modelClinicalC)
 
 # Autocorrelation
 durbinWatsonTest(modelClinicalA)
 durbinWatsonTest(modelClinicalB)
+durbinWatsonTest(modelClinicalC)
 
 # Check goodness of fit with Hosmer lemeshow
 gof(modelClinicalA, plotROC = FALSE)$gof[1]
 gof(modelClinicalB, plotROC = FALSE)$gof[1]
+gof(modelClinicalC, plotROC = FALSE)$gof[1]
 
 # Review influential observations with Cook's Distance
 cooksD.ClinicalA <- cooks.distance(modelClinicalA)
@@ -536,6 +546,14 @@ influentialRows.ClinicalB <- which(cooksD.ClinicalB > 4*mean(cooksD.ClinicalB, n
 dataClinical %>%  # print influential observations
     dplyr::select(one_of(names(modelClinicalB$model)[-1])) %>%
     slice(influentialRows.ClinicalB)
+
+cooksD.ClinicalC <- cooks.distance(modelClinicalC)
+plot(cooksD.ClinicalC, pch = "*", cex = 1.5)
+abline(h = 4*mean(cooksD.ClinicalC, na.rm = TRUE), col = "red")
+influentialRows.ClinicalC <- which(cooksD.ClinicalC > 4*mean(cooksD.ClinicalC, na.rm = TRUE))
+dataClinical %>%  # print influential observations
+    dplyr::select(one_of(names(modelClinicalC$model)[-1])) %>%
+    slice(influentialRows.ClinicalC)
 ```
 
 * No multicollinearity: VIF < 4 for all predictors
@@ -555,13 +573,14 @@ probTrainClinicalB <- predict(modelClinicalB, type = "response")
 modelClinicalB.cut <- optimalCutoff(dataClinical$lives, probTrainClinicalB)
 1 - misClassError(dataClinical$lives, probTrainClinicalB, threshold = modelClinicalB.cut)
 
-# Concordance
-Concordance(dataClinical$lives, probTrainClinicalA)[1]
-Concordance(dataClinical$lives, probTrainClinicalB)[1]
+probTrainClinicalC <- predict(modelClinicalC, type = "response")
+modelClinicalC.cut <- optimalCutoff(dataClinical$lives, probTrainClinicalC)
+1 - misClassError(dataClinical$lives, probTrainClinicalC, threshold = modelClinicalC.cut)
 
 # AUC
 gof(modelClinicalA)$auc
 gof(modelClinicalB)$auc
+gof(modelClinicalC)$auc
 
 # PPV/NPV
 precision(dataClinical$lives, probTrainClinicalA, threshold = modelClinicalA.cut)
@@ -570,25 +589,27 @@ npv(dataClinical$lives, probTrainClinicalA, threshold = modelClinicalA.cut)
 precision(dataClinical$lives, probTrainClinicalB, threshold = modelClinicalB.cut)
 npv(dataClinical$lives, probTrainClinicalB, threshold = modelClinicalB.cut)
 
-# Best BCLC model
+precision(dataClinical$lives, probTrainClinicalC, threshold = modelClinicalC.cut)
+npv(dataClinical$lives, probTrainClinicalC, threshold = modelClinicalC.cut)
+
+# Best Clinical model
 modelClinical <- modelClinicalB
 ```
 
 * The clinical model selected by stepwise regression and best subsets are very similar in performance
 
-Model       | A                | B               
------------ | ---------------- | ----------------
-Accuracy    | 0.72             | 0.72            
-Concordance | 0.77             | 0.75            
-AUC         | 0.77 [0.68-0.85] | 0.75 [0.66-0.84]
-PPV         | 0.69             | 0.69
-NPV         | 0.89             | 0.94
+Model       | A                | B                | C               
+----------- | ---------------- | ---------------- | ----------------
+Accuracy    | 0.73             | 0.73             | 0.73             
+AUC         | 0.78 [0.70-0.86] | 0.76 [0.68-0.84] | 0.75 [0.66-0.83]
+PPV         | 0.70             | 0.73             | 0.71
+NPV         | 0.90             | 0.70             | 0.78
 
-* Clinical model B has slighter higher NPV
+* Clinical model B has slighter higher PPV
 
 # Build the tumor/liver model
 
-### Correlation matrix for clinical variables
+### Correlation matrix for tumor/liver variables
 
 ```{r bclc-correlation}
 corrplot(cor(dataTrain %>%
@@ -627,7 +648,7 @@ with(dataTrain, table(lives, nodule_no))
 with(dataTrain, table(lives, encephalopathy))
 with(dataTrain, table(lives, performance))
 
-predBCLC <- varsBCLC[!varsBCLC %in% c("encephalopathy", "performance", "nodule_no")]
+predBCLC <- varsBCLC[!varsBCLC %in% c("encephalopathy")]
 ```
 
 * "encephalopathy", "nodule_no" and "performance" all have at least one cell in the 2x2 matrix with 0 values so are removed as predictors
@@ -651,46 +672,48 @@ modelBCLCA <- stepAIC(fullModel.BCLC,
 summary(modelBCLCA)
 ```
 
-### Random forest for feature selection
-
-`randomForest` used to select predictors for `bestglm` and `glmulti`
-
-```{r bclc-randomForest}
-rForestBCLC <- randomForest(lives ~ ., dataBCLC, importance = TRUE)
-importance(rForestBCLC)
-varImpPlot(rForestBCLC)
-```
-
 ### Model selection via best subsets
-
-Since `bestglm` requires p <=15, "protein_total", "alcohol", "hepCvAb", and "obesity" were removed as predictors (had the lowest mean decrease in accuracy as per random forst)
 
 ```{r bclc-bestSubset}
 dataBCLC.Xy <- dataBCLC %>%
     mutate_all(as.character) %>%
     mutate_all(as.numeric) %>%
+    dplyr::select(-c(performance, alp)) %>%  # max p = 15
     rename(y = lives)
+
 modelBCLC.bestglm <- bestglm(dataBCLC.Xy,
                              family = binomial, TopModels = 1,
                              IC = "BIC", method = "exhaustive")
 
 modelBCLCB <- modelBCLC.bestglm$BestModel
 
-modelBCLCB <- glm(lives ~ nodule_dim + hb + ascites + alp,
-                  data = dataBCLC,
-                  family = binomial)
 summary(modelBCLCB)
+
+modelBCLCB <- glm(lives ~ nodule_dim + bilirubin_total + hb + ascites,
+                 dataBCLC,
+                 family = "binomial")
 ```
 
+### Random forest for feature selection
+
+`randomForest` used to select predictors for `glmulti`
+
+```{r bclc-randomForest}
+set.seed(seed)
+rForestBCLC <- randomForest(lives ~ ., dataBCLC, importance = TRUE)
+importance(rForestBCLC)
+varImpPlot(rForestBCLC)
+```
 
 ### Model selection via automated model selection and model-averaging
 
-Selected the top 10 predictors as per random forest for `glmulti`
+Selected the top 12 predictors as per random forest for `glmulti`
 
 ```{r bclc-modelAveraging}
-modelBCLC.glmulti <- glmulti(lives ~ hb + alp + albumin + nodule_dim + ast +
-                                 ascites + metastasis + portalHypertension + inr +
-                                 bilirubin_total,
+# Model via automated model selection and model-averaging
+modelBCLC.glmulti <- glmulti(lives ~ hb + performance + albumin + alp +
+                                 nodule_dim + metastasis + plt + ast +
+                                 ascites + bilirubin_total + alt + pvt,
                              data = dataBCLC,
                              level = 1,
                              crit = "bic",
@@ -698,11 +721,11 @@ modelBCLC.glmulti <- glmulti(lives ~ hb + alp + albumin + nodule_dim + ast +
                              fitfunction = "glm",
                              family = binomial)
 print(modelBCLC.glmulti)
-modelBCLCC <- glm(lives ~ hb + albumin + nodule_dim,
+
+modelBCLCC <- glm(lives ~ metastasis + hb + bilirubin_total,
                   data = dataBCLC,
                   family = binomial)
 summary(modelBCLCC)
-
 ```
 
 ### Model error check
@@ -770,11 +793,6 @@ probTrainBCLCC <- predict(modelBCLCC, type = "response")
 modelBCLCC.cut <- optimalCutoff(dataBCLC$lives, probTrainBCLCC)
 1 - misClassError(dataBCLC$lives, probTrainBCLCC, threshold = modelBCLCC.cut)
 
-# Concordance
-Concordance(dataBCLC$lives, probTrainBCLCA)[1]
-Concordance(dataBCLC$lives, probTrainBCLCB)[1]
-Concordance(dataBCLC$lives, probTrainBCLCC)[1]
-
 # AUC
 gof(modelBCLCA)$auc
 gof(modelBCLCB)$auc
@@ -796,19 +814,17 @@ modelBCLC <- modelBCLCB
 
 Model       | A                | B                | C
 ----------- | ---------------- | ---------------- | -----
-Accuracy    | 0.78             | 0.76             | 0.72
-Concordance | 0.85             | 0.81             | 0.77
-AUC         | 0.85 [0.78-0.92] | 0.81 [0.73-0.88] | 0.77 [0.69 - 0.85]
-PPV         | 0.85             | 0.91             | 0.88
-NPV         | 0.69             | 0.64             | 0.59
+Accuracy    | 0.79             | 0.75             | 0.72
+AUC         | 0.88 [0.81-0.93] | 0.79 [0.72-0.87] | 0.78 [0.70-0.86]
+PPV         | 0.78             | 0.82             | 0.71
+NPV         | 0.82             | 0.66             | 0.75
 
-* Tumor/liver model A has slightly higher accuracy, concordance, and discrimination as per AUC
-* Tumor/liver model B has a slightly higher PPV which would mean the fewest false positives
+* Tumor/liver model B has a higher PPV which would mean the fewer false positives
 
 
 # Build the molecular biomarker model
 
-### Correlation matrix for clinical variables
+### Correlation matrix for molecular variables
 
 ```{r biomarker-correlation}
 with(dataTrain, cor(afp, ggt, use = "pairwise.complete.obs"))
@@ -926,11 +942,6 @@ probTrainMarkerC <- predict(modelMarkerC, type = "response")
 modelMarkerC.cut <- optimalCutoff(dataMarker$lives, probTrainMarkerC)
 1 - misClassError(dataMarker$lives, probTrainMarkerC, threshold = modelMarkerC.cut)
 
-# Concordance
-Concordance(dataMarker$lives, probTrainMarkerA)[1]
-Concordance(dataMarker$lives, probTrainMarkerB)[1]
-Concordance(dataMarker$lives, probTrainMarkerC)[1]
-
 # AUC
 gof(modelMarkerA)$auc
 gof(modelMarkerB)$auc
@@ -954,14 +965,14 @@ modelMarker <- modelMarkerA
 
 Model       | A                | B                | C
 ----------- | ---------------- | ---------------- | -----
-Accuracy    | 0.40             | 0.64             | 0.64
-Concordance | 0.26             | 0.58             | 0.59
-AUC         | 0.73 [0.64-0.83] | 0.60 [0.50-0.70] | 0.58 [0.48 - 0.69]
-PPV         | 1.00             | 0.67             | 0.66
-NPV         | 0.40             | 0.58             | 0.57
+Accuracy    | 0.69             | 0.66             | 0.67
+AUC         | 0.70 [0.60-0.79] | 0.62 [0.52-0.72] | 0.68 [0.59-0.78]
+PPV         | 0.69             | 0.67             | 0.68
+NPV         | 0.68             | 0.60             | 0.64
 
-* Tumor/liver model B and C have a higher accuracy and concordance but the AUC isn't statistically significant and have a low PPV
-* Tumor/liver model B has the highest PPV and a statistically significant AUC
+* Tumor/liver models A, B, and C have similar accuracy
+* Tumor/liver models A and C have higher AUCs
+* Tumor/liver model A has the highest PPV and NPV
 
 
 # Evaluate additive value of tumor/liver and molecular biomarker models
@@ -975,26 +986,29 @@ modelMarker$formula
 # Build added models
 probTrainClinical <- predict(modelClinical, type = "response")
 
-modelCB <- glm(lives ~ diabetes + hypertension + symptoms + creatinine +
-                   nodule_dim + inr + hb + ascites + alt + ast + alp,
+modelCB <- glm(lives ~ age + diabetes + hypertension + symptoms + creatinine + leuk +
+                   nodule_dim + hb + ascites + bilirubin_total,
                data = dataTrain,
                family = binomial)
 probTrainCB <- predict(modelCB, type = "response")
 
-modelCBM <- glm(lives ~ diabetes + hypertension + symptoms + creatinine +
-                    nodule_dim + inr + hb + ascites + alt + ast + alp +
+summary(modelCB)
+
+modelCBM <- glm(lives ~ age + diabetes + hypertension + symptoms + creatinine + leuk +
+                    nodule_dim + hb + ascites + bilirubin_total +
                     afp,
                 data = dataTrain,
                 family = binomial)
 probTrainCBM <- predict(modelCBM, type = "response")
+
+summary(modelCBM)
 
 # Likelihood ratio test
 anova(modelClinical, modelCB, test ="Chisq")
 anova(modelCB, modelCBM, test ="Chisq")
 ```
 
-* As per the likelihood ratio test, the model including both clinical risk factors and assessments of tumor staging and liver function fit the data better than the clinical risk factors alone
-* AFP doesn't substantially improve model fit
+* As per the likelihood ratio test, the model including both clinical risk factors and assessments of tumor staging and liver function fit the data better than the clinical risk factors alone and was further improved with AFP
 
 ```{r additionalValue-roc}
 # Compare ROC curves
@@ -1002,9 +1016,9 @@ rocClinical <- roc(dataTrain$lives, probTrainClinical)
 rocCB <- roc(dataTrain$lives, probTrainCB)
 rocCBM <- roc(dataTrain$lives, probTrainCBM)
 
-rocClinical$auc
-rocCB$auc
-rocCBM$auc
+gof(modelClinical, plotROC = FALSE)$auc
+gof(modelCB, plotROC = FALSE)$auc
+gof(modelCBM, plotROC = FALSE)$auc
 
 ggroc(data = list(C = rocClinical,
                   CB = rocCB,
@@ -1032,11 +1046,6 @@ modelCB.cut <- optimalCutoff(dataTrain$lives, probTrainCB)
 modelCBM.cut <- optimalCutoff(dataTrain$lives, probTrainCBM)
 1 - misClassError(dataTrain$lives, probTrainCBM, threshold = modelCBM.cut)
 
-# Concordance
-Concordance(dataTrain$lives, probTrainClinical)[1]
-Concordance(dataTrain$lives, probTrainCB)[1]
-Concordance(dataTrain$lives, probTrainCBM)[1]
-
 # PPV/NPV
 precision(dataTrain$lives, probTrainClinical, threshold = modelClinical.cut)
 npv(dataTrain$lives, probTrainClinical, threshold = modelClinical.cut)
@@ -1048,20 +1057,19 @@ precision(dataTrain$lives, probTrainCBM, threshold = modelCBM.cut)
 npv(dataTrain$lives, probTrainCBM, threshold = modelCBM.cut)
 ```
 
-Model       | C    | CB   | CBM
------------ | ---- | -----| -----
-Accuracy    | 0.72 | 0.85 | 0.86
-Concordance | 0.75 | 0.90 | 0.90
-AUC         | 0.75 | 0.90 | 0.90
-PPV         | 0.69 | 0.85 | 0.90
-NPV         | 0.94 | 0.86 | 0.81
+Model       | C                | CB               | CBM
+----------- | ---------------- | ---------------- | -----
+Accuracy    | 0.73             | 0.82             | 0.84
+AUC         | 0.78 [0.69-0.86] | 0.86 [0.80-0.93] | 0.88 [0.83-0.95]
+PPV         | 0.70             | 0.83             | 0.82
+NPV         | 0.90             | 0.80             | 0.89
 
 C: clinical
 CB: clinical + tumor/liver
 CBM: clinical + tumor/liver + molecular biomarker
 
 * The model which includes tumor staging and liver function assessments in additional to clinical risk factors improves the model accuracy, concordance, discrimination, and PPV
-* This isn't substantially improved with AFP
+* This may not be substantially improved with AFP
 
 # Internally validate models on test data
 
@@ -1124,19 +1132,17 @@ npv(dataTest$lives, probTestCBM, threshold = modelCBM.testCut)
 
 Model       | C    | CB   | CBM
 ----------- | ---- | -----| -----
-Accuracy    | 0.58 | 0.81 | 0.81
-Concordance | 0.61 | 0.77 | 0.77
+Accuracy    | 0.58 | 0.54 | 0.66
 AUC         | 0.61 | 0.78 | 0.77
-PPV         | 0.85 | 0.84 | 0.84
-NPV         | 0.55 | 0.75 | 0.75
+PPV         | 0.70 | 0.63 | 0.71
+NPV         | 0.55 | 1.00 | 0.71
 
 C: clinical
 CB: clinical + tumor/liver
 CBM: clinical + tumor/liver + molecular biomarker
 
 * The accuracy, concordance and AUC decreased in the test data suggestiong some overfitting which may preclude generalization to other populations
-* The PPV and NPV did not decrease with the same magnitude
-* Tumor staging and liver function assessments still appear to improve model fit for survival
+* Tumor staging and liver function assessments still appear to improve model discrimination for survival
 
 
 # K-fold cross validation
@@ -1146,20 +1152,20 @@ ctrl <- trainControl(method = "repeatedcv",
                      number = 10,
                      savePredictions = TRUE)
 
-modelCV.C <- train(lives ~ diabetes + hypertension + symptoms + creatinine,
+modelCV.C <- train(lives ~ age + diabetes + hypertension + symptoms + creatinine + leuk,
                    data = data.imp,
                    method = "glm",
                    family = "binomial",
                    trControl = ctrl,
                    tuneLength = 5)
-
 modelCV.C$results
 
 predictionsCV.C <- predict(modelCV.C, data.imp)
-caret::confusionMatrix(predictionsCV.C, data.imp$lives)
+confusionC <- caret::confusionMatrix(predictionsCV.C, data.imp$lives, positive = "1")
+print(confusionC)
 
-modelCV.CB <- train(lives ~ diabetes + hypertension + symptoms + creatinine +
-                        nodule_dim + inr + hb + ascites + alt + ast + alp + afp,
+modelCV.CB <- train(lives ~ age + diabetes + hypertension + symptoms + creatinine + leuk +
+                        nodule_dim + hb + ascites + bilirubin_total,
                     data = data.imp,
                     method = "glm",
                     family = "binomial",
@@ -1169,24 +1175,44 @@ modelCV.CB <- train(lives ~ diabetes + hypertension + symptoms + creatinine +
 modelCV.CB$results
 
 predictionsCV.CB <- predict(modelCV.CB, data.imp)
-caret::confusionMatrix(predictionsCV.CB, data.imp$lives)
+confusionCB <- caret::confusionMatrix(predictionsCV.CB, data.imp$lives, positive = "1")
+print(confusionCB)
+
+modelCV.CBM <- train(lives ~ age + diabetes + hypertension + symptoms + creatinine + leuk +
+                         nodule_dim + hb + ascites + bilirubin_total + afp,
+                     data = data.imp,
+                     method = "glm",
+                     family = "binomial",
+                     trControl = ctrl,
+                     tuneLength = 5)
+
+modelCV.CBM$results
+
+predictionsCV.CBM <- predict(modelCV.CBM, data.imp)
+confusionCBM <- caret::confusionMatrix(predictionsCV.CBM, data.imp$lives, positive = "1")
+print(confusionCBM)
 ```
 
-* 10-fold cross validation of the model consisting of clinical risk factors as well as tumor staging and liver function assessments showed an accuracy of 80%, PPV 80% and NPV 82%
-* This performance doesn't substantially differ from the training and test datasets
+* 10-fold cross validation of the model consisting of clinical risk factors as well as tumor staging and liver function assessments showed an accuracy of 77%, PPV 77% and NPV 77%
 
-Model       | C - training  | C - test  | C - CV 
------------ | ------------- | ----------| -------
-Accuracy    | 0.72          | 0.58      | 0.64 
-PPV         | 0.69          | 0.85      | 0.59 
-NPV         | 0.94          | 0.55      | 0.71 
+Model       | C    | CB   | CBM
+----------- | ---- | ---- | ----
+Accuracy    | 0.69 | 0.77 | 0.75 
+PPV         | 0.71 | 0.77 | 0.76 
+NPV         | 0.64 | 0.77 | 0.72 
+Sens        | 0.83 | 0.89 | 0.86
+Spec        | 0.48 | 0.57 | 0.57
 
+```{r model OR}
+modelCB.imp <- glm(lives ~ age + diabetes + hypertension + symptoms + creatinine +
+                       leuk + nodule_dim + hb + ascites + bilirubin_total,
+                   data.imp,
+                   family = "binomial")
+summary(modelCB.imp)
 
-Model       | CB - training | CB - test | CB - CV
------------ | ------------- | ----------| -------
-Accuracy    | 0.85          | 0.81      | 0.80   
-PPV         | 0.85          | 0.84      | 0.80 
-NPV         | 0.86          | 0.75      | 0.82 
+exp(cbind(coef(modelCB.imp), confint(modelCB.imp)))
+```
+
 
 # Nomogram
 
@@ -1506,16 +1532,20 @@ nomogrammer <- function(Prevalence,
 
 ```{r nomogram}
 nomogrammer(Prevalence = prop.table(table(data.imp$lives))[2],
-            Sens = 0.5079, Spec = 0.7755)
+            Sens = confusionC$byClass[1], Spec = confusionC$byClass[2])
 
 nomogrammer(Prevalence = prop.table(table(data.imp$lives))[2],
-            Sens = 0.7143, Spec = 0.8878)
+            Sens = confusionCB$byClass[1], Spec = confusionCB$byClass[2])
+
+nomogrammer(Prevalence = prop.table(table(data.imp$lives))[2],
+            Sens = confusionCBM$byClass[1], Spec = confusionCBM$byClass[2])
 ```
 
-* As illustrated by the nomogram, given a prevalence of HCC survival of 60.9% (pre-test probability), a positive test result with a model consisting of clinical risk factors only would provide a post-test probability of 77.9%
-* A model consisting a clinical risk factors as well as tumor staging and liver function assessments would provide a post-test probability of 90.8%
+* As illustrated by the nomogram, given a prevalence of HCC survival of 61.1% (pre-test probability), a positive test result with a model consisting of clinical risk factors only would provide a post-test probability of 71.3%
+* A model consisting a clinical risk factors as well as tumor staging and liver function assessments would provide a post-test probability of 76.5% and would not be improved with AFP (75.9%)
+
 
 # Conclusion
 
-The predictive ability of clinical risk factors to identify survival among patients diagnosed with hepatocellular carcinoma (HCC) was improved with tumor staging and liver function assessments. However, incorporation of molecular biomarkers is not expected to substantially improve HCC prognostication.
+The predictive ability of clinical risk factors to identify survival among patients diagnosed with hepatocellular carcinoma (HCC) was improved with tumor staging and liver function assessments. However, incorporation of molecular biomarkers is not expected to further substantially improve HCC prognostication.
 

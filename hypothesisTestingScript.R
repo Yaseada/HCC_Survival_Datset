@@ -12,6 +12,7 @@ library(dplyr)
 library(ggplot2)
 library(ggthemes)
 library(glmnet)
+library(glmulti)
 library(Hmisc)
 library(InformationValue)
 library(LogisticDx)
@@ -27,7 +28,8 @@ library(tidyr)
 # Load data
 rawData <- read.csv("./hcc-data.txt",
                     stringsAsFactors = FALSE,
-                    na.string = "?")
+                    na.string = "?",
+                    header = FALSE)
 
 seed <- 123
 set.seed(seed)
@@ -164,7 +166,7 @@ for (i in seq_along(varsPred)) {  # create distribution plots
             scale_y_continuous(breaks = seq(0, 1, by = 0.2)) +
             theme_light() +
             theme(legend.position = "none") +
-            ggthemes::scale_fill_tableau() +
+            ggthemes::scale_fill_tableau(palette = "Classic Gray 5") +
             labs(y = "Proportion",
                  x = varsPred[i])
         plots.bivar[[varsPred[i]]] <- ggplot(data.imp, aes_string(x = varsPred[i],
@@ -347,8 +349,10 @@ print(glmUnivarClinical)
 with(dataTrain, table(lives, nash))
 with(dataTrain, table(lives, hiv))
 with(dataTrain, table(lives, endemic))
+with(dataTrain, table(lives, hepBeAg))
 
-predClinical <- varsClinical[!varsClinical %in% c("nash", "hiv", "endemic")]
+predClinical <- varsClinical[!varsClinical %in% c("nash", "hiv", "endemic","hepBeAg")]
+
 
 # Fit the full model
 dataClinical <- dataTrain %>%
@@ -364,18 +368,12 @@ modelClinicalA <- stepAIC(fullModel.Clinical,
 
 summary(modelClinicalA)
 
-# Random forest for feature selection
-set.seed(seed)
-rForestClinical <- randomForest(lives ~ ., dataClinical, importance = TRUE)
-importance(rForestClinical)
-varImpPlot(rForestClinical)
-
 # Model via best subsets
 dataClinical.Xy <- dataClinical %>%
     mutate_all(as.character) %>%
     mutate_all(as.numeric) %>%
     rename(y = lives) %>%
-    dplyr::select(-c(protein_total, male, alcohol, hepCvAb))  # max p = 15
+    dplyr::select(-c(mcv, protein_total, hepCvAb))  # max p = 15
 
 modelClinical.bestglm <- bestglm(dataClinical.Xy,
                                  family = binomial,
@@ -386,14 +384,20 @@ modelClinical.bestglm <- bestglm(dataClinical.Xy,
 modelClinicalB <- modelClinical.bestglm$BestModel
 summary(modelClinicalB)
 
-modelClinicalB <- glm(lives ~ diabetes + hypertension + symptoms + creatinine,
-                      data = dataClinical,
-                      family = binomial)
+modelClinicalB <- glm(lives ~ age + diabetes + hypertension + symptoms,
+                      dataClinical,
+                      family = "binomial")
+
+# Random forest for feature selection
+set.seed(seed)
+rForestClinical <- randomForest(lives ~ ., dataClinical, importance = TRUE)
+importance(rForestClinical)
+varImpPlot(rForestClinical)
 
 # Model via automated model selection and model-averaging
-modelClinical.glmulti <- glmulti(lives ~ symptoms + creatinine + hepBcAb +
-                                     diabetes + hemochromatosis +age + leuk +
-                                     hypertension + renalInsufficiency + mcv,
+modelClinical.glmulti <- glmulti(lives ~ creatinine + hepBcAb + protein_total + leuk +
+                                     diabetes + obesity + mcv + symptoms +
+                                     hypertension + alcohol + hemochromatosis + renalInsufficiency,
                              data = dataClinical,
                              level = 1,
                              crit = "bic",
@@ -402,17 +406,26 @@ modelClinical.glmulti <- glmulti(lives ~ symptoms + creatinine + hepBcAb +
                              family = binomial)
 print(modelClinical.glmulti)
 
+modelClinicalC <- glm(lives ~ diabetes + symptoms + hypertension + creatinine,
+                      dataClinical,
+                      family = "binomial")
+
+summary(modelClinicalC)
+
 # Multicollinearity
 vif(modelClinicalA)
 vif(modelClinicalB)
+vif(modelClinicalC)
 
 # Autocorrelation
 durbinWatsonTest(modelClinicalA)
 durbinWatsonTest(modelClinicalB)
+durbinWatsonTest(modelClinicalC)
 
 # Check goodness of fit with Hosmer lemeshow
 gof(modelClinicalA, plotROC = FALSE)$gof[1]
 gof(modelClinicalB, plotROC = FALSE)$gof[1]
+gof(modelClinicalC, plotROC = FALSE)$gof[1]
 
 # Review influential observations with Cook's Distance
 cooksD.ClinicalA <- cooks.distance(modelClinicalA)
@@ -431,6 +444,14 @@ dataClinical %>%  # print influential observations
     dplyr::select(one_of(names(modelClinicalB$model)[-1])) %>%
     slice(influentialRows.ClinicalB)
 
+cooksD.ClinicalC <- cooks.distance(modelClinicalC)
+plot(cooksD.ClinicalC, pch = "*", cex = 1.5)
+abline(h = 4*mean(cooksD.ClinicalC, na.rm = TRUE), col = "red")
+influentialRows.ClinicalC <- which(cooksD.ClinicalC > 4*mean(cooksD.ClinicalC, na.rm = TRUE))
+dataClinical %>%  # print influential observations
+    dplyr::select(one_of(names(modelClinicalC$model)[-1])) %>%
+    slice(influentialRows.ClinicalC)
+
 # Accuracy
 probTrainClinicalA <- predict(modelClinicalA, type = "response")
 modelClinicalA.cut <- optimalCutoff(dataClinical$lives, probTrainClinicalA)
@@ -440,13 +461,14 @@ probTrainClinicalB <- predict(modelClinicalB, type = "response")
 modelClinicalB.cut <- optimalCutoff(dataClinical$lives, probTrainClinicalB)
 1 - misClassError(dataClinical$lives, probTrainClinicalB, threshold = modelClinicalB.cut)
 
-# Concordance
-Concordance(dataClinical$lives, probTrainClinicalA)[1]
-Concordance(dataClinical$lives, probTrainClinicalB)[1]
+probTrainClinicalC <- predict(modelClinicalC, type = "response")
+modelClinicalC.cut <- optimalCutoff(dataClinical$lives, probTrainClinicalC)
+1 - misClassError(dataClinical$lives, probTrainClinicalC, threshold = modelClinicalC.cut)
 
 # AUC
 gof(modelClinicalA)$auc
 gof(modelClinicalB)$auc
+gof(modelClinicalC)$auc
 
 # PPV/NPV
 precision(dataClinical$lives, probTrainClinicalA, threshold = modelClinicalA.cut)
@@ -455,8 +477,11 @@ npv(dataClinical$lives, probTrainClinicalA, threshold = modelClinicalA.cut)
 precision(dataClinical$lives, probTrainClinicalB, threshold = modelClinicalB.cut)
 npv(dataClinical$lives, probTrainClinicalB, threshold = modelClinicalB.cut)
 
-# Best BCLC model
-modelClinical <- modelClinicalA
+precision(dataClinical$lives, probTrainClinicalC, threshold = modelClinicalC.cut)
+npv(dataClinical$lives, probTrainClinicalC, threshold = modelClinicalC.cut)
+
+# Best Clinical model
+modelClinical <- modelClinicalB
 
 
 
@@ -490,11 +515,9 @@ for (i in seq_along(varsBCLC)) {
 
 print(glmUnivarBCLC)
 
-with(dataTrain, table(lives, nodule_no))
 with(dataTrain, table(lives, encephalopathy))
-with(dataTrain, table(lives, performance))
 
-predBCLC <- varsBCLC[!varsBCLC %in% c("encephalopathy", "performance", "nodule_no")]
+predBCLC <- varsBCLC[!varsBCLC %in% c("encephalopathy")]
 
 # Fit the full model
 dataBCLC <- dataTrain %>%
@@ -510,31 +533,35 @@ modelBCLCA <- stepAIC(fullModel.BCLC,
 
 summary(modelBCLCA)
 
-# Random forest method
-rForestBCLC <- randomForest(lives ~ ., dataBCLC, importance = TRUE)
-importance(rForestBCLC)
-varImpPlot(rForestBCLC)
-
 # Model via best subsets
 dataBCLC.Xy <- dataBCLC %>%
     mutate_all(as.character) %>%
     mutate_all(as.numeric) %>%
+    dplyr::select(-c(performance, alp)) %>%  # max p = 15
     rename(y = lives)
+
 modelBCLC.bestglm <- bestglm(dataBCLC.Xy,
                              family = binomial, TopModels = 1,
                              IC = "BIC", method = "exhaustive")
 
 modelBCLCB <- modelBCLC.bestglm$BestModel
 
-modelBCLCB <- glm(lives ~ nodule_dim + hb + ascites + alp,
-                  data = dataBCLC,
-                  family = binomial)
 summary(modelBCLCB)
 
+modelBCLCB <- glm(lives ~ nodule_dim + bilirubin_total + hb + ascites,
+                 dataBCLC,
+                 family = "binomial")
+
+# Random forest method
+set.seed(seed)
+rForestBCLC <- randomForest(lives ~ ., dataBCLC, importance = TRUE)
+importance(rForestBCLC)
+varImpPlot(rForestBCLC)
+
 # Model via automated model selection and model-averaging
-modelBCLC.glmulti <- glmulti(lives ~ hb + alp + albumin + nodule_dim + ast +
-                                 ascites + metastasis + portalHypertension + inr +
-                                 bilirubin_total,
+modelBCLC.glmulti <- glmulti(lives ~ hb + performance + albumin + alp +
+                                 nodule_dim + metastasis + plt + ast +
+                                 ascites + bilirubin_total + alt + pvt,
                              data = dataBCLC,
                              level = 1,
                              crit = "bic",
@@ -542,7 +569,8 @@ modelBCLC.glmulti <- glmulti(lives ~ hb + alp + albumin + nodule_dim + ast +
                              fitfunction = "glm",
                              family = binomial)
 print(modelBCLC.glmulti)
-modelBCLCC <- glm(lives ~ hb + albumin + nodule_dim,
+
+modelBCLCC <- glm(lives ~ metastasis + hb + bilirubin_total,
                   data = dataBCLC,
                   family = binomial)
 summary(modelBCLCC)
@@ -600,11 +628,6 @@ modelBCLCB.cut <- optimalCutoff(dataBCLC$lives, probTrainBCLCB)
 probTrainBCLCC <- predict(modelBCLCC, type = "response")
 modelBCLCC.cut <- optimalCutoff(dataBCLC$lives, probTrainBCLCC)
 1 - misClassError(dataBCLC$lives, probTrainBCLCC, threshold = modelBCLCC.cut)
-
-# Concordance
-Concordance(dataBCLC$lives, probTrainBCLCA)[1]
-Concordance(dataBCLC$lives, probTrainBCLCB)[1]
-Concordance(dataBCLC$lives, probTrainBCLCC)[1]
 
 # AUC
 gof(modelBCLCA)$auc
@@ -722,11 +745,6 @@ probTrainMarkerC <- predict(modelMarkerC, type = "response")
 modelMarkerC.cut <- optimalCutoff(dataMarker$lives, probTrainMarkerC)
 1 - misClassError(dataMarker$lives, probTrainMarkerC, threshold = modelMarkerC.cut)
 
-# Concordance
-Concordance(dataMarker$lives, probTrainMarkerA)[1]
-Concordance(dataMarker$lives, probTrainMarkerB)[1]
-Concordance(dataMarker$lives, probTrainMarkerC)[1]
-
 # AUC
 gof(modelMarkerA)$auc
 gof(modelMarkerB)$auc
@@ -757,31 +775,35 @@ modelMarker$formula
 # Build added models
 probTrainClinical <- predict(modelClinical, type = "response")
 
-modelCB <- glm(lives ~ diabetes + hypertension + symptoms + creatinine +
-                   nodule_dim + inr + hb + ascites + alt + ast + alp,
+modelCB <- glm(lives ~ age + diabetes + hypertension + symptoms + creatinine + leuk +
+                   nodule_dim + hb + ascites + bilirubin_total,
                data = dataTrain,
                family = binomial)
 probTrainCB <- predict(modelCB, type = "response")
 
-modelCBM <- glm(lives ~ diabetes + hypertension + symptoms + creatinine +
-                    nodule_dim + inr + hb + ascites + alt + ast + alp +
+summary(modelCB)
+
+modelCBM <- glm(lives ~ age + diabetes + hypertension + symptoms + creatinine + leuk +
+                    nodule_dim + hb + ascites + bilirubin_total +
                     afp,
                 data = dataTrain,
                 family = binomial)
 probTrainCBM <- predict(modelCBM, type = "response")
+
+summary(modelCBM)
 
 # Likelihood ratio test
 anova(modelClinical, modelCB, test ="Chisq")
 anova(modelCB, modelCBM, test ="Chisq")
 
 # Compare ROC curves
-rocClinical <- roc(dataTrain$lives, probTrainClinical)
+rocClinical <- roc(dataClinical$lives, probTrainClinical)
 rocCB <- roc(dataTrain$lives, probTrainCB)
 rocCBM <- roc(dataTrain$lives, probTrainCBM)
 
-rocClinical$auc
-rocCB$auc
-rocCBM$auc
+gof(modelClinical, plotROC = FALSE)$auc
+gof(modelCB, plotROC = FALSE)$auc
+gof(modelCBM, plotROC = FALSE)$auc
 
 ggroc(data = list(C = rocClinical,
                   CB = rocCB,
@@ -804,11 +826,6 @@ modelCB.cut <- optimalCutoff(dataTrain$lives, probTrainCB)
 
 modelCBM.cut <- optimalCutoff(dataTrain$lives, probTrainCBM)
 1 - misClassError(dataTrain$lives, probTrainCBM, threshold = modelCBM.cut)
-
-# Concordance
-Concordance(dataTrain$lives, probTrainClinical)[1]
-Concordance(dataTrain$lives, probTrainCB)[1]
-Concordance(dataTrain$lives, probTrainCBM)[1]
 
 # PPV/NPV
 precision(dataTrain$lives, probTrainClinical, threshold = modelClinical.cut)
@@ -861,11 +878,6 @@ modelCB.testCut <- optimalCutoff(dataTest$lives, probTestCB)
 modelCBM.testCut <- optimalCutoff(dataTest$lives, probTestCBM)
 1 - misClassError(dataTest$lives, probTestCBM, threshold = modelCBM.testCut)
 
-# Concordance
-Concordance(dataTest$lives, probTestClinical)[1]
-Concordance(dataTest$lives, probTestCB)[1]
-Concordance(dataTest$lives, probTestCBM)[1]
-
 # PPV/NPV
 precision(dataTest$lives, probTestClinical, threshold = modelClinical.testCut)
 npv(dataTest$lives, probTestClinical, threshold = modelClinical.testCut)
@@ -877,26 +889,26 @@ precision(dataTest$lives, probTestCBM, threshold = modelCBM.testCut)
 npv(dataTest$lives, probTestCBM, threshold = modelCBM.testCut)
 
 
-
 # K-FOLD CROSS VALIDATION ----
 
 ctrl <- trainControl(method = "repeatedcv",
                      number = 10,
                      savePredictions = TRUE)
-modelCV.C <- train(lives ~ diabetes + hypertension + symptoms + creatinine,
+
+modelCV.C <- train(lives ~ age + diabetes + hypertension + symptoms + creatinine + leuk,
                    data = data.imp,
                    method = "glm",
                    family = "binomial",
                    trControl = ctrl,
                    tuneLength = 5)
-
 modelCV.C$results
 
 predictionsCV.C <- predict(modelCV.C, data.imp)
-caret::confusionMatrix(predictionsCV.C, data.imp$lives)
+confusionC <- caret::confusionMatrix(predictionsCV.C, data.imp$lives, positive = "1")
+print(confusionC)
 
-modelCV.CB <- train(lives ~ diabetes + hypertension + symptoms + creatinine +
-                        nodule_dim + inr + hb + ascites + alt + ast + alp + afp,
+modelCV.CB <- train(lives ~ age + diabetes + hypertension + symptoms + creatinine + leuk +
+                        nodule_dim + hb + ascites + bilirubin_total,
                     data = data.imp,
                     method = "glm",
                     family = "binomial",
@@ -906,7 +918,31 @@ modelCV.CB <- train(lives ~ diabetes + hypertension + symptoms + creatinine +
 modelCV.CB$results
 
 predictionsCV.CB <- predict(modelCV.CB, data.imp)
-caret::confusionMatrix(predictionsCV.CB, data.imp$lives)
+confusionCB <- caret::confusionMatrix(predictionsCV.CB, data.imp$lives, positive = "1")
+print(confusionCB)
+
+modelCV.CBM <- train(lives ~ age + diabetes + hypertension + symptoms + creatinine + leuk +
+                         nodule_dim + hb + ascites + bilirubin_total + afp,
+                     data = data.imp,
+                     method = "glm",
+                     family = "binomial",
+                     trControl = ctrl,
+                     tuneLength = 5)
+
+modelCV.CBM$results
+
+predictionsCV.CBM <- predict(modelCV.CBM, data.imp)
+confusionCBM <- caret::confusionMatrix(predictionsCV.CBM, data.imp$lives, positive = "1")
+print(confusionCBM)
+
+
+modelCB.imp <- glm(lives ~ age + diabetes + hypertension + symptoms + creatinine +
+                       leuk + nodule_dim + hb + ascites + bilirubin_total,
+                   data.imp,
+                   family = "binomial")
+summary(modelCB.imp)
+
+exp(cbind(coef(modelCB.imp), confint(modelCB.imp)))
 
 
 
@@ -1226,7 +1262,11 @@ nomogrammer <- function(Prevalence,
 
 
 nomogrammer(Prevalence = prop.table(table(data.imp$lives))[2],
-            Sens = 0.5079, Spec = 0.7755)
+            Sens = confusionC$byClass[1], Spec = confusionC$byClass[2])
 
 nomogrammer(Prevalence = prop.table(table(data.imp$lives))[2],
-            Sens = 0.7143, Spec = 0.8878)
+            Sens = confusionCB$byClass[1], Spec = confusionCB$byClass[2])
+
+nomogrammer(Prevalence = prop.table(table(data.imp$lives))[2],
+            Sens = confusionCBM$byClass[1], Spec = confusionCBM$byClass[2])
+
